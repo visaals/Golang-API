@@ -1,0 +1,212 @@
+package main
+
+import (
+    "fmt"
+   // "html"
+    "log"
+    "net/http"
+    //"strconv"
+    "runtime"
+    "io"
+    //"strings"
+    "github.com/gorilla/mux"
+    "database/sql"
+    //"io/ioutil"
+    "github.com/go-sql-driver/mysql"
+    "reflect"
+    "encoding/json"
+)
+
+ var db, err = sql.Open("mysql", "visaals2:vissiv@tcp(172.31.26.194:3306)/swap")
+    
+
+func main() {
+    if err != nil {
+            panic(err.Error())
+    }
+    defer db.Close()
+
+    fmt.Println("Starting API..." + runtime.Version())
+    defer fmt.Println("main.go has finished running.")
+    
+
+    fmt.Println(reflect.TypeOf(db).String() + "\n" )
+
+    // Open doesn't open a connection. Validate DSN data:
+    err = db.Ping()
+    if err != nil {
+        panic(err.Error()) // proper error handling instead of panic in your app
+    }
+
+    router := mux.NewRouter().StrictSlash(true)
+    router.HandleFunc("/create_new_user", CreateNewUser)
+    // router.HandleFunc("/delete_user/{username}", deleteUser)
+    router.HandleFunc("/login_handler", LoginHandler)
+    router.HandleFunc("/", hello)
+    log.Fatal(http.ListenAndServe(":8000", router))
+}
+
+func hello(w http.ResponseWriter, r *http.Request) {
+     io.WriteString(w, "Hello world")
+}
+
+type UserBasicStruct struct {
+    Swaptag string      `json:"swaptag"`
+    Firstname string    `json:"first_name"`
+    Lastname string     `json:"last_name"`
+    Email string        `json:"email"`
+    Position string     `json:"position"`
+    Password string     `json:"password"`
+}
+
+func CreateNewUser(w http.ResponseWriter, r *http.Request ) {
+
+    // init user
+    var us UserBasicStruct
+
+    // decoding json POST user data into UserBasicStructs
+    decoder := json.NewDecoder(r.Body)
+    for {
+        // if error is EOF, break, else log the fatal error if it's not nil
+        if err := decoder.Decode(&us); err == io.EOF {
+            break
+        } else if err != nil {
+            log.Fatal(err)
+        }    
+    }
+    
+    ret, msg := InsertUserBasicInfo(&us)
+    fmt.Println(ret, msg)
+
+}
+
+func InsertUserBasicInfo( user *UserBasicStruct ) (bool, string) {
+
+    // Prepare statement for inserting data
+    stmtIns, err := db.Prepare("INSERT usr_basic_info SET swaptag=?, first_name=?, last_name=?, email=?, position=?, password=?, isLoggedIn=?") // ? = placeholder
+    if err != nil {
+        panic(err.Error()) 
+        return false, "Failed to prepare statement.";
+    }
+    defer stmtIns.Close() // Close the statement when we leave main() / the program terminates
+    
+    // execute insert statement
+    res, err := stmtIns.Exec(user.Swaptag, user.Firstname, user.Lastname, user.Email, user.Position, user.Password, true)
+    // return error message if failed
+    if driverErr, failed := err.(*mysql.MySQLError); failed && driverErr.Number == 1062 {
+            // 1062 is duplicate key
+        return false, driverErr.Message
+
+    } 
+
+    // get the last inserted id just cause
+    id, err := res.LastInsertId()
+    if err != nil {
+        panic(err)
+    }
+
+    // print the id
+    fmt.Println(id)
+    return true, "Successfully inserted " + string(id);
+    
+
+
+}
+
+type LoginStruct struct {
+    Swaptag string      `json:"swaptag"`
+    Password string     `json:"password"`
+} 
+
+func LoginHandler( w http.ResponseWriter, r * http.Request ) {
+    // init LoginStruct
+    var ls LoginStruct
+
+    // decoding json POST user data into UserBasicStructs
+    decoder := json.NewDecoder(r.Body)
+    for {
+        // if error is EOF, break, else log the fatal error if it's not nil
+        if err := decoder.Decode(&ls); err == io.EOF {
+            break
+        } else if err != nil {
+            log.Fatal(err)
+        }    
+    }
+
+    ret, msg := LoginUser(&ls)
+    fmt.Println(ret, msg)
+
+
+}
+
+
+func LoginUser( ls *LoginStruct) (bool, string) {
+    // check if username password match
+    var theymatch bool;
+    // Prepare statement for 
+    stmtIns, err := db.Prepare("SELECT swaptag, password, isLoggedIn FROM usr_basic_info WHERE (swaptag=?)") // ? = placeholder
+    if err != nil {
+        panic(err.Error()) 
+        return false, "Failed to prepare login statement.";
+    }
+    defer stmtIns.Close() 
+
+    // execute insert statement
+    rows, err := stmtIns.Query(ls.Swaptag)
+    if driverErr, failed := err.(*mysql.MySQLError); failed && driverErr.Number == 1062 {
+        // 1062 is duplicate key
+        return false, driverErr.Message
+
+    } 
+    defer rows.Close()
+
+    var swaptag string
+    var password string
+    var isLoggedIn bool
+    for rows.Next() {
+        err := rows.Scan(&swaptag, &password, &isLoggedIn)
+        if err != nil {
+            log.Fatal(err)
+        }
+        log.Println(swaptag, password, isLoggedIn)
+    }
+    err = rows.Err()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    theymatch = true 
+
+    if theymatch {
+        //$sql = "UPDATE MyGuests SET lastname='Doe' WHERE id=2";
+
+            // Prepare statement for inserting data
+            stmtIns, err := db.Prepare("UPDATE usr_basic_info SET isLoggedIn=? WHERE swaptag=?") // ? = placeholder
+            if err != nil {
+                panic(err.Error()) 
+                return false, "Failed to prepare login statement.";
+            }
+            defer stmtIns.Close() 
+            
+            // execute insert statement
+            res, err := stmtIns.Exec(true, &swaptag)
+            if driverErr, failed := err.(*mysql.MySQLError); failed && driverErr.Number == 1062 {
+                // 1062 is duplicate key
+                return false, driverErr.Message
+
+            } 
+            fmt.Println(res)
+            return true, "Login Successful"
+
+    } 
+
+    return false, "Login Failed"
+
+}
+
+
+
+
+
+
+
